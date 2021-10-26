@@ -1,0 +1,115 @@
+---
+title: "Projet_appr"
+author: "Claire et Mervan "
+date: "18/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(AER)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(tidyr)
+library(randomForest)
+```
+```{r}
+data("Fatalities")
+Fata<-Fatalities[,-c(18:26)]
+Fata <- Fata %>% drop_na()
+summary(Fata)
+```
+
+## Arbre de régression 
+
+```{r}
+set.seed(6) #fixation du noyau
+crt<-trainControl(method='cv', number=7) #groupe contrôle
+Arbrereg<- train(fatal~., data=Fata, method='rpart', trControl=crt, tuneLength=10)
+Arbrereg
+#plot(Arbrereg)
+Arbrereg$bestTune
+plot(Arbrereg$finalModel)
+Arbrereg$finalModel
+plotArbre<-rpart(fatal~., data = Fata, control=rpart.control(cp=Arbrereg$bestTune))
+rpart.plot(plotArbre) 
+```
+Sur les 335 observations (par année et par états), on peut tout d'abord séparer la population en deux groupes par rapport aux nombres de véhicules (en millions), d'un côté on aura le nombre de voiture strictement inférieur à 79327.5, comptabilisant $306$ et de l'autre côté, les 29 observations dont le nombre de véhicules est supérieur à 79327.5. POur cette branche d'arbres, on sépare ensuite les 29 observations par le pourcentage de mormon présent dans l'observation, d'un côté on aura les 16 observations qui auront moins de 46.27% de mormon et le reste sur l'autre branche. On peut décrire aussi chaque branche. 
+
+## Bagging
+```{r}
+set.seed(6)
+train<-sample(1:nrow(Fata), 0.75*nrow(Fata))
+
+test<-(1:nrow(Fata))[-train] ; Fata.test<-Fata[test, "fatal"] ; p<-ncol(Fata)-1
+fit.bag<-randomForest(fatal~., data=Fata, subset=train, mtry=p, ntrees=1000)
+yhat.bag = predict(fit.bag,newdata=Fata[test,]) #prediction de Y  
+test.err.bag=mean((yhat.bag-Fata.test)^2) #calcul de l'erreur avec comme distance euclidienne 
+test.err.bag
+plot(fit.bag);  varImpPlot(fit.bag)
+
+postResample(yhat.bag, Fata.test)
+
+
+```
+La variable qui explique le mieux le taux de personnes morts à bord d'un véhicule est les états. Cela signifie que le nombre de personnes mortes à bord d'un véhicule dépend fortement de l'état. Ensuite, le nombre total de véhicule influence le nombre de personnes mortes à bord d'un véhicule. Enfin, la taxe sur la bière influence également le nombre de personnes mortes à bord d'un véhicule. 
+
+
+## Boosting
+```{r}
+set.seed(6)
+grid<-expand.grid(shrinkage=0.01, interaction.depth=c(1,2,3,4), n.trees=seq(10,1000,10),n.minobsinnode=10)
+ctrl <- trainControl(method = 'cv',number = 5, savePredictions=T)
+boosting.hit<-train(fatal~., data=Fata, method="gbm",trControl=ctrl,tuneGrid=grid,verbose=F)
+plot(boosting.hit, type="l")
+
+yhat.boost = predict(boosting.hit,newdata=Fata[test,]) #prediction de Y  
+#test.err.bag=mean((yhat.bag-Fata.test)^2) #calcul de l'erreur avec comme distance euclidienne 
+test.err.bag
+plot(fit.bag);  varImpPlot(fit.bag)
+
+postResample(yhat.bag, Fata.test)
+
+```
+
+Sur le graphique, il est net qu'on ne peut choisir le modèle d'ordre 1, puisque son graphe est largement au dessus des trois autres. Puis, on peut éliminer le modèle d'intéractio d'ordre 2, il est légèrement au dessus des deux autres. Il n'est par contre pas évidemment de déterminer le meilleur modèle entre les deux, grâce aux graphiques. Heureusement, nous avons une commande pour déterminer quel modèle est meilleur. 
+
+```{r}
+boosting.hit$bestTune
+```
+Ainsi, le modèle d'intéraction d'ordre 4 est le meilleur modèle, en choisissant 1000 arbres, un paramètre de ratatinage de 0.01. 
+
+Etant donné que nous avons, uniquement testé jusqu'à l'ordre 4, on peut se poser la question est-ce que l'ordre 5 ne serait pas un meilleur modèle. On va donc comparer les deux modèles. 
+```{r}
+set.seed(6)
+grid1<-expand.grid(shrinkage=0.01, interaction.depth=c(1,4,5,6), n.trees=seq(10,1000,10),n.minobsinnode=10)
+ctrl1 <- trainControl(method = 'cv',number = 5, savePredictions=T)
+boosting.hit1<-train(fatal~., data=Fata, method="gbm",trControl=ctrl1,tuneGrid=grid1,verbose=F)
+plot(boosting.hit1, type="l")
+
+
+
+```
+
+Sur le graphique, nous pouvons pas bien discerner quel modèle est le meilleur. Cependant, on peut remarquer que les lignes se superposent, on peut donc supposer que les deux modèles donnes le même RMSE. On peut donc supposer que le modèle d'interaction d'ordre 4 et d'ordre 5 sont similaires. On fait donc l'hypothèse que le modèle d'interaction d'ordre 4 est meilleur, puisqu'il est "plus simple". Vérifions cela. 
+```{r}
+boosting.hit1$bestTune
+boosting.hit1$finalModel
+
+
+```
+
+```{r}
+summary(boosting.hit)[1:10, ]
+```
+```{r}
+plot(boosting.hit$finalModel, i="milestot")
+plot(boosting.hit$finalModel, i="pop1517")
+plot(boosting.hit$finalModel, i="pop")
+plot(boosting.hit$finalModel, i ="pop2124")
+plot(boosting.hit$finalModel, i ="pop1820")
+plot(boosting.hit$finalModel, i="mormon")
+#plot(boosting.hit$finalModel, i="beertax")
+```
+
